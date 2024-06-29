@@ -5,7 +5,7 @@ use super::kerberos_time::KerberosTime;
 use super::principal_name::PrincipalName;
 use super::realm::Realm;
 use super::tagged_ticket::TaggedTicket;
-use der::Sequence;
+use der::{asn1::BitString, Sequence};
 
 /// ```text
 /// KDC-REQ-BODY    ::= SEQUENCE {
@@ -31,8 +31,16 @@ use der::Sequence;
 /// ```
 #[derive(Debug, Eq, PartialEq, Sequence)]
 pub(crate) struct KdcReqBody {
+    //
+    // #[asn1(context_specific = "0")]
+    // pub(crate) kdc_options: KdcOptions,
+
+    // I'm not sure what's going on but it looks like this KdcOptions type
+    // isn't correctly writing a full u32 (it's truncated to u8) and when the flags
+    // are set they have bits swapped. :(
     #[asn1(context_specific = "0")]
-    pub(crate) kdc_options: KdcOptions,
+    pub(crate) kdc_options: BitString,
+
     #[asn1(context_specific = "1", optional = "true")]
     pub(crate) cname: Option<PrincipalName>,
     #[asn1(context_specific = "2")]

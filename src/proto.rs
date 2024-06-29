@@ -16,7 +16,7 @@ use crate::asn1::{
     pa_data::PaData,
     pa_enc_ts_enc::PaEncTsEnc,
     principal_name::PrincipalName,
-    Ia5String, OctetString,
+    BitString, Ia5String, OctetString,
 };
 use crate::constants::AES_256_KEY_LEN;
 use crate::crypto::{
@@ -69,7 +69,7 @@ pub struct KerberosAsReq {
 
 #[derive(Debug)]
 pub struct PreAuth {
-    enc_timestamp: Option<Vec<u8>>,
+    enc_timestamp: Option<EncryptedData>,
     pa_fx_cookie: Option<Vec<u8>>,
 }
 
@@ -273,15 +273,7 @@ impl KerberosAsReqBuilder {
 impl KerberosAsReq {
     fn to_asn(&self) -> Result<KdcReq, der::Error> {
         let padata = if let Some(preauth) = &self.preauth {
-            let mut padata_inner = Vec::with_capacity(2);
-
-            if let Some(enc_data) = &preauth.enc_timestamp {
-                let padata_value = OctetString::new(enc_data.clone())?;
-                padata_inner.push(PaData {
-                    padata_type: PaDataType::PaEncTimestamp as u32,
-                    padata_value,
-                })
-            }
+            let mut padata_inner = Vec::with_capacity(4);
 
             if let Some(fx_cookie) = &preauth.pa_fx_cookie {
                 let padata_value = OctetString::new(fx_cookie.clone())?;
@@ -290,6 +282,37 @@ impl KerberosAsReq {
                     padata_value,
                 })
             }
+
+            if let Some(enc_data) = &preauth.enc_timestamp {
+                let padata_value = match enc_data {
+                    EncryptedData::Aes256CtsHmacSha196 { kvno, data } => {
+                        let cipher = OctetString::new(data.clone())?;
+                        KdcEncryptedData {
+                            etype: EncryptionType::AES256_CTS_HMAC_SHA1_96 as i32,
+                            kvno: None,
+                            cipher,
+                        }
+                    }
+                };
+
+                // Need to encode the padata value now.
+                let padata_value = padata_value.to_der().and_then(OctetString::new)?;
+
+                padata_inner.push(PaData {
+                    padata_type: PaDataType::PaEncTimestamp as u32,
+                    padata_value,
+                })
+            }
+
+            padata_inner.push(PaData {
+                padata_type: PaDataType::PadataAsFreshness as u32,
+                padata_value: OctetString::new(&[])?,
+            });
+
+            padata_inner.push(PaData {
+                padata_type: PaDataType::EncpadataReqEncPaRep as u32,
+                padata_value: OctetString::new(&[])?,
+            });
 
             Some(padata_inner)
         } else {
@@ -301,8 +324,7 @@ impl KerberosAsReq {
             msg_type: KrbMessageType::KrbAsReq as u8,
             padata,
             req_body: KdcReqBody {
-                kdc_options: FlagSet::<KerberosFlags>::new(0b0)
-                    .expect("Failed to build kdc_options"),
+                kdc_options: BitString::from_bytes(&[0x00, 0x80, 0x00, 0x00]).unwrap(),
                 cname: Some(PrincipalName {
                     // Should be some kind of enum probably?
                     name_type: 1,
@@ -636,7 +658,9 @@ impl KerberosPaRep {
                     )?
                 };
 
-                encrypt_aes256_cts_hmac_sha1_96(&base_key, &data, key_usage)?
+                let data = encrypt_aes256_cts_hmac_sha1_96(&base_key, &data, key_usage)?;
+
+                EncryptedData::Aes256CtsHmacSha196 { kvno: None, data }
             }
             // Shouldn't be possible, we pre-vet all the etypes.
             _ => return Err(KrbError::UnsupportedEncryption),

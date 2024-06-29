@@ -41,24 +41,35 @@ impl<'a> ::der::Decode<'a> for KrbKdcReq {
 
 impl ::der::Encode for KrbKdcReq {
     fn encoded_len(&self) -> Result<der::Length, der::Error> {
+        tracing::trace!(?self);
         let len: der::Length = match self {
             KrbKdcReq::AsReq(asreq) => {
-                Tag::Application {
+                let tag_len = Tag::Application {
                     constructed: true,
                     number: TagNumber::N10,
                 }
-                .encoded_len()?
-                    + asreq.encoded_len()?
-                    + asreq.encoded_len()?.encoded_len()?
+                .encoded_len()?;
+
+                let as_req_len = asreq.encoded_len()?;
+                let as_req_len_len = as_req_len.encoded_len()?;
+
+                tracing::trace!(?tag_len, ?as_req_len, ?as_req_len_len);
+
+                tag_len + as_req_len + as_req_len_len
             }
             KrbKdcReq::TgsReq(tgsreq) => {
-                Tag::Application {
+                let tag_len = Tag::Application {
                     constructed: true,
                     number: TagNumber::N12,
                 }
-                .encoded_len()?
-                    + tgsreq.encoded_len()?
-                    + tgsreq.encoded_len()?.encoded_len()?
+                .encoded_len()?;
+
+                let tgs_req_len = tgsreq.encoded_len()?;
+                let tgs_req_len_len = tgs_req_len.encoded_len()?;
+
+                tracing::trace!(?tag_len, ?tgs_req_len, ?tgs_req_len_len);
+
+                tag_len + tgs_req_len + tgs_req_len_len
             }
         }?;
         Ok(len)
@@ -132,8 +143,10 @@ mod tests {
             assert_eq!(pa.padata_value.as_bytes(), tpa.padata_value);
         }
 
-        let bits = asreq.req_body.kdc_options;
-        assert_eq!(bits, tasreq.kdc_options);
+        // let bits = asreq.req_body.kdc_options;
+        // assert_eq!(bits, tasreq.kdc_options);
+        // Temporarily commented out.
+        assert!(false);
 
         let ref cname = &asreq.req_body.cname.as_ref().unwrap();
         assert_eq!(cname.name_type, 1);

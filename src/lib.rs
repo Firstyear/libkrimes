@@ -77,6 +77,8 @@ impl Decoder for KerberosTcpCodec {
             .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x.to_string()))
             .expect("Failed to decode");
 
+        // buf.clear();
+
         Ok(Some(rep))
     }
 }
@@ -112,9 +114,24 @@ impl Encoder<KerberosRequest> for KerberosTcpCodec {
         * highest-order bit of the header; the length is the 31 low-order bits.
         * (Note that this record specification is NOT in XDR standard form!)
         */
+
+        // Something is certainly wrong here with the xdr writer, as doing it by
+        // hand works. given how simple xdr is, maybe we just take this approach?
+
+        /*
+        // buf.resize(der_bytes.len() + 4, 0);
         let mut w = XdrRecordWriter::new(buf.writer());
         w.set_implicit_eor(true);
         w.write_all(&der_bytes)
+        */
+
+        let d_len = der_bytes.len() as u32;
+        let d_len_bytes = d_len.to_be_bytes();
+        buf.clear();
+        buf.extend_from_slice(&d_len_bytes);
+        buf.extend_from_slice(&der_bytes);
+
+        Ok(())
     }
 }
 
@@ -135,7 +152,7 @@ mod tests {
     use tracing::trace;
 
     #[tokio::test]
-    async fn test_localhost_kdc() {
+    async fn test_localhost_kdc_no_preauth() {
         let _ = tracing_subscriber::fmt::try_init();
 
         let stream = TcpStream::connect("127.0.0.1:55000")
@@ -192,12 +209,14 @@ mod tests {
 
         let mut krb_stream = Framed::new(stream, KerberosTcpCodec::default());
 
+        let now = SystemTime::now();
+
         let as_req = KerberosRequest::build_asreq(
             "testuser_preauth".to_string(),
             "krbtgt".to_string(),
             None,
-            SystemTime::now() + Duration::from_secs(3600),
-            None,
+            now + Duration::from_secs(3600),
+            Some(now + Duration::from_secs(86400)),
         )
         .build();
 
@@ -256,7 +275,7 @@ mod tests {
             "krbtgt".to_string(),
             None,
             now + Duration::from_secs(3600),
-            None,
+            Some(now + Duration::from_secs(86400)),
         )
         .add_preauthentication(pre_auth)
         .build();
