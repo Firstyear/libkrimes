@@ -2,7 +2,7 @@ use crate::asn1::kerberos_flags::KerberosFlags;
 use crate::asn1::pa_enc_ts_enc::PaEncTsEnc;
 use crate::proto::{DerivedKey, KerberosRequest, KerberosTime, KrbError, PreauthData};
 use crate::proto::{EncryptionType, Name, Preauth};
-use rand::{rng, Rng};
+use crypto_glue::rand::{rng, Rng};
 use std::time::Duration;
 use std::time::SystemTime;
 use tracing::trace;

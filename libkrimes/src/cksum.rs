@@ -2,7 +2,10 @@ use crate::asn1::checksum::Checksum as Asn1Checksum;
 use crate::asn1::OctetString;
 use crate::error::KrbError;
 use crate::proto::SessionKey;
-use crypto_glue::der::{asn1::Any, Encode};
+use crypto_glue::{
+    md5,
+    der::{asn1::Any, Encode}
+};
 
 pub enum ChecksumBuilder {
     //Crc32,

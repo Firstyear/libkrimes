@@ -12,7 +12,10 @@ use ldap3_proto::LdapResultCode;
 use ldap3_proto::LdapSearchResultEntry;
 use ldap3_proto::LdapSearchScope;
 use ldap3_proto::SearchRequest;
-use crypto_glue::rand::prelude::*;
+use crypto_glue::rand::{
+    self,
+    prelude::*
+};
 use serde::ser::Serializer;
 use serde::Deserialize;
 use serde_binary::Encode;

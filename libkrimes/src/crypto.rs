@@ -10,11 +10,13 @@ use crypto_glue::{
  hmac::{digest::FixedOutput, Hmac, Mac};
  */
 
-    traits::{Mac
-    KeyInit, KeyIvInit
+    traits::{Mac,
+    KeyInit,
+    KeyIvInit
     },
         sha1::Sha1,
         aes256::{self, Aes256Key, Aes256Block},
+        aes256cts::{self, KeyIvInit},
 
     pbkdf2::pbkdf2_hmac,
     rand::{rng, Rng},
@@ -61,7 +63,6 @@ fn dk_aes_256(out_buf: &mut [u8; AES_256_KEY_LEN], buf: &[u8; AES_256_KEY_LEN]) 
 }
 
 fn dk_encrypt_aes_256_cbc(key: &Aes256Key, plaintext: &Aes256Block, out_buf: &mut Aes256Block) {
-    use aes::cipher::KeyIvInit;
     Aes256CbcEnc::new(key, &IV_ZERO.into()).encrypt_block_b2b_mut(plaintext, out_buf)
 }
 
@@ -342,8 +343,6 @@ fn encrypt_aes256_cts(
 }
 
 fn decrypt_aes256_cts(key: &[u8; AES_256_KEY_LEN], ciphertext: &[u8]) -> Result<Vec<u8>, KrbError> {
-    use aes::cipher::{KeyInit, KeyIvInit};
-
     // Should not be possible
     debug_assert!(!ciphertext.is_empty());
 
