@@ -1,5 +1,6 @@
 use bitflags::bitflags;
 use bytes::BytesMut;
+use crypto_glue::rand::{self, prelude::*};
 use futures_util::sink::SinkExt;
 use ldap3_proto::proto::LdapOp;
 use ldap3_proto::simple::DisconnectionNotice;
@@ -12,10 +13,6 @@ use ldap3_proto::LdapResultCode;
 use ldap3_proto::LdapSearchResultEntry;
 use ldap3_proto::LdapSearchScope;
 use ldap3_proto::SearchRequest;
-use crypto_glue::rand::{
-    self,
-    prelude::*
-};
 use serde::ser::Serializer;
 use serde::Deserialize;
 use serde_binary::Encode;
@@ -862,12 +859,12 @@ async fn handle_cldaprequest(cfg: &CldapConfig, protomsg: LdapMsg) -> Option<Lda
     let res = match ServerOps::try_from(protomsg) {
         Ok(server_op) => do_cldap(cfg, server_op).await.unwrap_or_else(|e| {
             error!("do_cldap failed -> {:?}", e);
-            LdapResponseState::Disconnect(DisconnectionNotice::r#gen(
+            LdapResponseState::Disconnect(DisconnectionNotice::r#gen_response(
                 LdapResultCode::Other,
                 "Internal Server Error",
             ))
         }),
-        Err(_) => LdapResponseState::Disconnect(DisconnectionNotice::r#gen(
+        Err(_) => LdapResponseState::Disconnect(DisconnectionNotice::r#gen_response(
             LdapResultCode::ProtocolError,
             "Invalid Request",
         )),

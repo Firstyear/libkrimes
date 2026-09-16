@@ -3,8 +3,8 @@ use crate::asn1::OctetString;
 use crate::error::KrbError;
 use crate::proto::SessionKey;
 use crypto_glue::{
+    der::{asn1::Any, Encode},
     md5,
-    der::{asn1::Any, Encode}
 };
 
 pub enum ChecksumBuilder {

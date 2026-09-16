@@ -36,16 +36,14 @@ use crate::asn1::{
     tagged_ticket::TaggedTicket as Asn1Ticket,
     Ia5String, OctetString,
 };
-use crate::constants::{
-    AES_256_KEY_LEN, PBKDF2_SHA1_ITER, PBKDF2_SHA1_ITER_MINIMUM, RFC_PBKDF2_SHA1_ITER,
-};
+use crate::constants::{PBKDF2_SHA1_ITER, PBKDF2_SHA1_ITER_MINIMUM, RFC_PBKDF2_SHA1_ITER};
 use crate::crypto::{
     checksum_hmac_sha1_96_aes256, decrypt_aes256_cts_hmac_sha1_96,
     derive_key_aes256_cts_hmac_sha1_96, encrypt_aes256_cts_hmac_sha1_96,
 };
 use crate::error::KrbError;
+use crypto_glue::aes256::{self, Aes256Key};
 use der::{Decode, Encode};
-use rand::{rng, Rng};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
@@ -67,7 +65,7 @@ pub struct Preauth {
 #[derive(Clone, PartialEq, Eq)]
 pub enum DerivedKey {
     Aes256CtsHmacSha196 {
-        k: [u8; AES_256_KEY_LEN],
+        k: Aes256Key,
         i: u32,
         s: String,
         kvno: u32,
@@ -314,7 +312,7 @@ impl fmt::Debug for DerivedKey {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum SessionKey {
-    Aes256CtsHmacSha196 { k: [u8; AES_256_KEY_LEN] },
+    Aes256CtsHmacSha196 { k: Aes256Key },
 }
 
 impl fmt::Debug for SessionKey {
@@ -333,7 +331,8 @@ impl TryInto<KdcEncryptionKey> for SessionKey {
     fn try_into(self) -> Result<KdcEncryptionKey, KrbError> {
         match self {
             SessionKey::Aes256CtsHmacSha196 { k } => {
-                let key_value = OctetString::new(k).map_err(|_| KrbError::DerEncodeOctetString)?;
+                let key_value =
+                    OctetString::new(k.as_slice()).map_err(|_| KrbError::DerEncodeOctetString)?;
 
                 Ok(KdcEncryptionKey {
                     key_type: EncryptionType::AES256_CTS_HMAC_SHA1_96 as i32,
@@ -353,14 +352,14 @@ impl TryFrom<KdcEncryptionKey> for SessionKey {
 
         match etype {
             EncryptionType::AES256_CTS_HMAC_SHA1_96 => {
-                let mut k = [0; AES_256_KEY_LEN];
+                let mut k = Aes256Key::default();
                 let byte_ref = kdc_enc_key.key_value.as_bytes();
 
                 if byte_ref.len() != k.len() {
                     return Err(KrbError::InvalidEncryptionKey);
                 }
 
-                k.copy_from_slice(byte_ref);
+                k.as_mut_slice().copy_from_slice(byte_ref);
 
                 Ok(SessionKey::Aes256CtsHmacSha196 { k })
             }
@@ -371,8 +370,7 @@ impl TryFrom<KdcEncryptionKey> for SessionKey {
 
 impl SessionKey {
     fn new() -> Self {
-        let mut k = [0u8; AES_256_KEY_LEN];
-        rng().fill(&mut k);
+        let k = aes256::new_key();
         SessionKey::Aes256CtsHmacSha196 { k }
     }
 
@@ -448,7 +446,7 @@ impl SessionKey {
 }
 
 pub enum KdcPrimaryKey {
-    Aes256 { k: [u8; AES_256_KEY_LEN], kvno: u32 },
+    Aes256 { k: Aes256Key, kvno: u32 },
 }
 
 impl fmt::Debug for KdcPrimaryKey {
@@ -465,16 +463,16 @@ impl TryFrom<&[u8]> for KdcPrimaryKey {
     type Error = KrbError;
 
     fn try_from(key: &[u8]) -> Result<Self, Self::Error> {
-        if key.len() == AES_256_KEY_LEN {
-            // TODO kvno from server_state
-            let kvno = 1u32;
-            let mut k = [0u8; AES_256_KEY_LEN];
-            k.copy_from_slice(key);
-            Ok(KdcPrimaryKey::Aes256 { k, kvno })
-        } else {
-            tracing::error!(key_len = %key.len(), expected = %AES_256_KEY_LEN);
-            Err(KrbError::InvalidEncryptionKey)
-        }
+        aes256::key_from_slice(key)
+            .map(|k| {
+                // TODO kvno from server_state
+                let kvno = 1u32;
+                KdcPrimaryKey::Aes256 { k, kvno }
+            })
+            .ok_or_else(|| {
+                tracing::error!(key_len = %key.len(), expected = %aes256::key_size());
+                KrbError::InvalidEncryptionKey
+            })
     }
 }
 
@@ -1656,7 +1654,6 @@ mod tests {
     use super::SessionKey;
     use crate::asn1::ap_req::ApReqInner;
     use crate::asn1::kdc_req_body::KdcReqBody;
-    use crate::constants::AES_256_KEY_LEN;
     use crate::proto::ApReq;
     use crate::proto::DerivedKey;
     use crate::proto::KdcPrimaryKey;
@@ -1665,6 +1662,7 @@ mod tests {
     use crate::proto::TicketGrantRequestUnverified;
     use crate::{cksum::ChecksumBuilder, constants::PBKDF2_SHA1_ITER_MINIMUM};
     use assert_hex::assert_eq_hex;
+    use crypto_glue::aes256::{self, Aes256Key};
     use der::{asn1::Any, Decode};
 
     #[tokio::test]
@@ -1675,11 +1673,11 @@ mod tests {
 
         let session_key = "167391F64DA06DDE35752AFC110DCF6BFD797BF2B64027C98941ACDBDE3C356B";
         let session_key = hex::decode(session_key).expect("Failed to decode sample");
-        let session_key = SessionKey::Aes256CtsHmacSha196 {
-            k: session_key
-                .try_into()
-                .expect("Failed to create session key"),
-        };
+
+        let session_key =
+            aes256::key_from_slice(&session_key).expect("Failed to create session key");
+
+        let session_key = SessionKey::Aes256CtsHmacSha196 { k: session_key };
         let checksum = "E101C395D98466F1FE8B6D79";
         let checksum = hex::decode(checksum).expect("Failed to decode sample");
 
@@ -1713,11 +1711,11 @@ mod tests {
             req_body,
         };
 
-        let k: [u8; AES_256_KEY_LEN] = [
+        let k = aes256::key_from_bytes([
             0xbd, 0xba, 0x8d, 0xaa, 0xe2, 0x43, 0xed, 0x02, 0xbb, 0xbc, 0x0a, 0x4a, 0x06, 0x73,
             0x02, 0x83, 0x9b, 0x82, 0xe7, 0x42, 0xd9, 0x41, 0x18, 0xdc, 0xbe, 0xc4, 0x2d, 0xb9,
             0x2d, 0x5c, 0x46, 0xbe,
-        ];
+        ]);
         let primary_key = KdcPrimaryKey::Aes256 { k, kvno: 1 };
         let realm = "AFOREST.AD";
         let res = t.validate(&primary_key, realm);
@@ -1750,7 +1748,7 @@ mod tests {
         // Comes as JWE in "client_key" json field
         let key = "A5381D189DAABE3FC406CF03EF514BDC20C66D6213CFF7CCCBA311EADB0362E6".to_string();
         let key = hex::decode(key).expect("Failed to decode hex stream");
-        let key: [u8; 32] = key.as_slice().try_into().expect("Failed");
+        let key: Aes256Key = aes256::key_from_slice(&key).expect("Invalid key");
         let key = DerivedKey::Aes256CtsHmacSha196 {
             k: key,
             i: 0,

@@ -2,36 +2,17 @@ use crate::constants::*;
 use crate::error::KrbError;
 
 use crypto_glue::{
-
-/*
- aes::cipher::generic_array::GenericArray;
- aes::cipher::{BlockDecryptMut, BlockEncryptMut};
- aes::Aes256;
- hmac::{digest::FixedOutput, Hmac, Mac};
- */
-
-    traits::{Mac,
-    KeyInit,
-    KeyIvInit
+    aes256::{
+        Aes256, Aes256Block, Aes256BlockSize, Aes256Key, BlockCipherDecrypt, BlockCipherEncrypt,
     },
-        sha1::Sha1,
-        aes256::{self, Aes256Key, Aes256Block},
-        aes256cts::{self, KeyIvInit},
-
+    aes256cbc::{Aes256CbcDec, Aes256CbcEnc, BlockModeDecrypt, BlockModeEncrypt},
+    aes256cts::KeyIvInit,
+    hmac_s1::HmacSha1,
     pbkdf2::pbkdf2_hmac,
-    rand::{rng, Rng},
-    hmac_s1::{
-        HmacSha1
-    },
+    rand::{rng, RngExt},
+    sha1::Sha1,
+    traits::{FixedOutput, KeyInit, Mac},
 };
-
-
-// type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-// type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
-// 
-// type Aes256Block = GenericArray<u8, <aes::Aes256 as aes::cipher::BlockSizeUser>::BlockSize>;
-// type Aes256Key = GenericArray<u8, <aes::Aes256 as aes::cipher::KeySizeUser>::KeySize>;
-
 
 /// Given the users passphrase, the kerberos realm, the client name and the iteration
 /// count then the users base key is derived. The iteration count is an optional value
@@ -41,35 +22,35 @@ pub(crate) fn derive_key_aes256_cts_hmac_sha1_96(
     passphrase: &[u8],
     salt: &[u8],
     iter_count: u32,
-) -> Result<[u8; AES_256_KEY_LEN], KrbError> {
+) -> Result<Aes256Key, KrbError> {
     // Salt is the concatenation of realm + cname.
     // NOTE: Salt may come in AS-REP padata ETYPE-INFO2
-    let mut buf = [0u8; AES_256_KEY_LEN];
+    let mut buf = Aes256Key::default();
     pbkdf2_hmac::<Sha1>(passphrase, salt, iter_count, &mut buf);
 
     // It's unclear what this achieves cryptographically ...
-    let mut dk_buf = [0u8; AES_256_KEY_LEN];
+    let mut dk_buf = Aes256Key::default();
     dk_aes_256(&mut dk_buf, &buf);
 
     Ok(dk_buf)
 }
 
-fn dk_aes_256(out_buf: &mut [u8; AES_256_KEY_LEN], buf: &[u8; AES_256_KEY_LEN]) {
-    let (lower, upper) = out_buf.split_at_mut(AES_BLOCK_SIZE);
+fn dk_aes_256(out_buf: &mut Aes256Key, buf: &Aes256Key) {
+    let (lower, upper) = out_buf.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
-    dk_encrypt_aes_256_cbc(buf.into(), &N_FOLD_KERBEROS_16.into(), lower.into());
-    dk_encrypt_aes_256_cbc(buf.into(), (&*lower).into(), upper.into());
+    dk_encrypt_aes_256_cbc(buf, &N_FOLD_KERBEROS_16.into(), lower.as_mut());
+    dk_encrypt_aes_256_cbc(buf, (&*lower).into(), upper.as_mut());
 }
 
 fn dk_encrypt_aes_256_cbc(key: &Aes256Key, plaintext: &Aes256Block, out_buf: &mut Aes256Block) {
-    Aes256CbcEnc::new(key, &IV_ZERO.into()).encrypt_block_b2b_mut(plaintext, out_buf)
+    Aes256CbcEnc::new(key, &IV_ZERO.into()).encrypt_block_b2b(plaintext, out_buf)
 }
 
 /// Given the [base key](derive_key_aes256_cts_hmac_sha1_96) and the key_usage value
 /// decrypt and authenticate the provided ciphertext.
 pub(crate) fn decrypt_aes256_cts_hmac_sha1_96(
-    key: &[u8; AES_256_KEY_LEN],
+    key: &Aes256Key,
     ciphertext: &[u8],
     key_usage: i32,
 ) -> Result<Vec<u8>, KrbError> {
@@ -114,7 +95,7 @@ pub(crate) fn decrypt_aes256_cts_hmac_sha1_96(
 /// Given the [base key](derive_key_aes256_cts_hmac_sha1_96) and the key_usage value
 /// encrypt and authenticate the provided plaintext.
 pub(crate) fn encrypt_aes256_cts_hmac_sha1_96(
-    key: &[u8; AES_256_KEY_LEN],
+    key: &Aes256Key,
     plaintext: &[u8],
     key_usage: i32,
 ) -> Result<Vec<u8>, KrbError> {
@@ -147,7 +128,7 @@ pub(crate) fn encrypt_aes256_cts_hmac_sha1_96(
     Ok(ciphertext)
 }
 
-fn dk_kc_aes_256(buf: &[u8; AES_256_KEY_LEN], key_usage: i32) -> [u8; AES_256_KEY_LEN] {
+fn dk_kc_aes_256(buf: &Aes256Key, key_usage: i32) -> Aes256Key {
     let kc_const = match key_usage {
         0 => &N_FOLD_KEY_USAGE_KC_00,
         1 => &N_FOLD_KEY_USAGE_KC_01,
@@ -184,21 +165,18 @@ fn dk_kc_aes_256(buf: &[u8; AES_256_KEY_LEN], key_usage: i32) -> [u8; AES_256_KE
         _ => unreachable!(),
     };
 
-    let mut kc = [0u8; AES_256_KEY_LEN];
+    let mut kc = Aes256Key::default();
 
-    let (lower, upper) = kc.split_at_mut(AES_BLOCK_SIZE);
+    let (lower, upper) = kc.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
-    dk_encrypt_aes_256_cbc(buf.into(), kc_const.into(), lower.into());
-    dk_encrypt_aes_256_cbc(buf.into(), (&*lower).into(), upper.into());
+    dk_encrypt_aes_256_cbc(buf, kc_const.into(), lower.as_mut());
+    dk_encrypt_aes_256_cbc(buf, (&*lower).into(), upper.as_mut());
 
     kc
 }
 
-fn dk_ki_ke_aes_256(
-    buf: &[u8; AES_256_KEY_LEN],
-    key_usage: i32,
-) -> ([u8; AES_256_KEY_LEN], [u8; AES_256_KEY_LEN]) {
+fn dk_ki_ke_aes_256(buf: &Aes256Key, key_usage: i32) -> (Aes256Key, Aes256Key) {
     let (ki_const, ke_const) = match key_usage {
         0 => (&N_FOLD_KEY_USAGE_KI_00, &N_FOLD_KEY_USAGE_KE_00),
         1 => (&N_FOLD_KEY_USAGE_KI_01, &N_FOLD_KEY_USAGE_KE_01),
@@ -235,16 +213,16 @@ fn dk_ki_ke_aes_256(
         _ => unreachable!(),
     };
 
-    let mut ki = [0u8; AES_256_KEY_LEN];
+    let mut ki = Aes256Key::default();
 
-    let (lower, upper) = ki.split_at_mut(AES_BLOCK_SIZE);
+    let (lower, upper) = ki.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
     dk_encrypt_aes_256_cbc(buf.into(), ki_const.into(), lower.into());
     dk_encrypt_aes_256_cbc(buf.into(), (&*lower).into(), upper.into());
 
-    let mut ke = [0u8; AES_256_KEY_LEN];
-    let (lower, upper) = ke.split_at_mut(AES_BLOCK_SIZE);
+    let mut ke = Aes256Key::default();
+    let (lower, upper) = ke.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
     dk_encrypt_aes_256_cbc(buf.into(), ke_const.into(), lower.into());
@@ -254,12 +232,11 @@ fn dk_ki_ke_aes_256(
 }
 
 fn encrypt_aes256_cts(
-    key: &[u8; AES_256_KEY_LEN],
+    key: &Aes256Key,
     confuzzler: &[u8],
     plaintext: &[u8],
     ciphertext: &mut [u8],
 ) -> Result<(), KrbError> {
-
     // Need at lesat one block for the confuzzler.
     debug_assert!(ciphertext.len() == plaintext.len() + AES_BLOCK_SIZE);
 
@@ -290,20 +267,20 @@ fn encrypt_aes256_cts(
     // All remaining chunks are to be directly encrypted.
 
     // Setup the CBC encipher.
-    let mut cipher = Aes256CbcEnc::new(key.into(), &IV_ZERO.into());
+    let mut cipher = Aes256CbcEnc::new(key, &IV_ZERO.into());
 
     // Setup the initial block that contains the confuzzler
     let mut previous_block = [0u8; AES_BLOCK_SIZE];
     previous_block.copy_from_slice(confuzzler);
 
     // Initially encipher the confuzzler
-    cipher.encrypt_block_mut((&mut previous_block).into());
+    cipher.encrypt_block((&mut previous_block).into());
     previous_chunk.copy_from_slice(&previous_block);
 
     // Now for each chunk, encrypt.
     for (cipher_chunk, plain_chunk) in chunks {
         previous_block.copy_from_slice(plain_chunk);
-        cipher.encrypt_block_mut((&mut previous_block).into());
+        cipher.encrypt_block((&mut previous_block).into());
         cipher_chunk.copy_from_slice(&previous_block);
         previous_chunk = cipher_chunk;
     }
@@ -331,8 +308,8 @@ fn encrypt_aes256_cts(
         p_n_star[i] ^= c_n1_star[i];
     }
 
-    let mut raw_cipher = Aes256::new(key.into());
-    raw_cipher.encrypt_block_mut(&mut c_n_block);
+    let raw_cipher = Aes256::new(key);
+    raw_cipher.encrypt_block(&mut c_n_block);
 
     // We now have c_n_block and c_n1_star. This is where we apply the CS3 / CTS
     // swap.
@@ -342,14 +319,14 @@ fn encrypt_aes256_cts(
     Ok(())
 }
 
-fn decrypt_aes256_cts(key: &[u8; AES_256_KEY_LEN], ciphertext: &[u8]) -> Result<Vec<u8>, KrbError> {
+fn decrypt_aes256_cts(key: &Aes256Key, ciphertext: &[u8]) -> Result<Vec<u8>, KrbError> {
     // Should not be possible
     debug_assert!(!ciphertext.is_empty());
 
     let ctxt_len = ciphertext.len();
 
     let num_blocks = ctxt_len / AES_BLOCK_SIZE;
-    let mut cipher = Aes256CbcDec::new(key.into(), &IV_ZERO.into());
+    let mut cipher = Aes256CbcDec::new(key, &IV_ZERO.into());
 
     if num_blocks == 0 {
         // Impossible in krb because the first block is always the confounder.
@@ -374,7 +351,7 @@ fn decrypt_aes256_cts(key: &[u8; AES_256_KEY_LEN], ciphertext: &[u8]) -> Result<
     // .encrypt_block_b2b_mut(plaintext, out_buf)
 
     for (cipher_chunk, plain_chunk) in chunks {
-        cipher.decrypt_block_b2b_mut(cipher_chunk.into(), plain_chunk.into())
+        cipher.decrypt_block_b2b(cipher_chunk.as_slice(), plain_chunk.as_mut())
     }
 
     // Now we have to process the last two blocks. To understand why we need
@@ -413,12 +390,12 @@ fn decrypt_aes256_cts(key: &[u8; AES_256_KEY_LEN], ciphertext: &[u8]) -> Result<
 
     // We need a scratch block.
     let mut z: Aes256Block = [0u8; AES_BLOCK_SIZE].into();
-    let mut raw_cipher = Aes256::new(key.into());
+    let mut raw_cipher = Aes256::new(key);
 
     let z_star_len = c_n1_chunk.len();
 
     // Decrypt Cn
-    raw_cipher.decrypt_block_b2b_mut(c_n_chunk.into(), &mut z);
+    raw_cipher.decrypt_block_b2b(&c_n_chunk, &mut z);
 
     // Block is now Z.
     let (z_star, z_star_2) = z.split_at(z_star_len);
@@ -441,14 +418,14 @@ fn decrypt_aes256_cts(key: &[u8; AES_256_KEY_LEN], ciphertext: &[u8]) -> Result<
 
     // We can re-use the existing cbc cipher as it has the correct state
     // of the cbc mode.
-    cipher.decrypt_block_b2b_mut(&cn1_block, p_n1_chunk.into());
+    cipher.decrypt_block_b2b(&cn1_block, p_n1_chunk.as_mut());
 
     Ok(plaintext)
 }
 
 pub(crate) fn checksum_hmac_sha1_96_aes256(
     plaintext: &[u8],
-    key: &[u8; AES_256_KEY_LEN],
+    key: &Aes256Key,
     key_usage: i32,
 ) -> Result<Vec<u8>, KrbError> {
     if plaintext.is_empty() {
@@ -471,7 +448,7 @@ pub(crate) fn checksum_hmac_sha1_96_aes256(
 mod tests {
     use super::*;
     use crate::asn1::pa_enc_ts_enc::PaEncTsEnc;
-    use crate::constants::{AES_256_KEY_LEN, RFC_PBKDF2_SHA1_ITER};
+    use crate::constants::RFC_PBKDF2_SHA1_ITER;
     use assert_hex::assert_eq_hex;
     use crypto_glue::der::Decode;
 
@@ -490,7 +467,7 @@ mod tests {
                 0x67, 0x15, 0xc8, 0xda, 0xef, 0x10, 0x9f, 0xa3, 0xd8, 0xb2, 0xe1, 0x46, 0x16, 0xaa,
                 0xca, 0xb5, 0x49, 0xfd
             ],
-            out_key,
+            out_key.as_slice(),
         )
     }
 
@@ -511,7 +488,7 @@ mod tests {
                 0xe6, 0x5b, 0xbb, 0x52, 0x28, 0x09, 0x90, 0xa2, 0xfa, 0x27, 0x88, 0x39, 0x98, 0xd7,
                 0x2a, 0xf3, 0x01, 0x61
             ],
-            out_key,
+            out_key.as_slice(),
         )
     }
 
@@ -530,7 +507,7 @@ mod tests {
                 0xb0, 0xa7, 0x54, 0x8d, 0x93, 0xb0, 0xab, 0x30, 0xa8, 0xbc, 0x3f, 0xf1, 0x62, 0x80,
                 0x38, 0x2b, 0x8c, 0x2a
             ],
-            out_key,
+            out_key.as_slice(),
         )
     }
 
@@ -731,12 +708,12 @@ mod tests {
         let checksum = "351E56F9FA207CDCA62A0BDC";
         let checksum = hex::decode(checksum).unwrap();
 
-        let mut b: [u8; AES_256_KEY_LEN] = [0; AES_256_KEY_LEN];
+        let mut b = Aes256Key::default();
         b.clone_from_slice(base_key.as_slice());
 
         let kc = dk_kc_aes_256(&b, 6);
 
-        assert_eq_hex!(kc, derived_key.as_slice());
+        assert_eq_hex!(kc.as_slice(), derived_key.as_slice());
 
         let mut mac = HmacSha1::new_from_slice(&derived_key).unwrap();
         mac.update(&input);

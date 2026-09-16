@@ -8,6 +8,7 @@ use binrw::helpers::until_eof;
 use binrw::io::{SeekFrom, TakeSeekExt};
 use binrw::BinReaderExt;
 use binrw::{binread, binwrite, BinWrite};
+use crypto_glue::aes256;
 use std::fmt;
 use std::fs::File;
 use std::io::Read;
@@ -261,15 +262,14 @@ impl TryFrom<&RecordData> for Option<KeytabEntry> {
                 key,
                 key_version_u32,
             } => {
+                let k = aes256::key_from_slice(key.value.as_slice())
+                    .ok_or(KrbError::InvalidEncryptionKey)?;
+
                 let e = KeytabEntry {
                     principal: principal.try_into()?,
                     timestamp: *timestamp,
                     key: DerivedKey::Aes256CtsHmacSha196 {
-                        k: key
-                            .value
-                            .as_slice()
-                            .try_into()
-                            .map_err(|_| KrbError::InvalidEncryptionKey)?,
+                        k,
                         i: 0,
                         s: String::new(),
                         kvno: match key_version_u32 {
