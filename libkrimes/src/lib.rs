@@ -31,7 +31,7 @@ use crate::asn1::{krb_kdc_rep::KrbKdcRep, krb_kdc_req::KrbKdcReq};
 use crate::constants::DEFAULT_IO_MAX_SIZE;
 use bytes::Buf;
 use bytes::BytesMut;
-use der::{Decode, Encode};
+use crypto_glue::der::{Decode, Encode};
 use proto::{KerberosReply, KerberosRequest};
 use std::io;
 use tokio_util::codec::{Decoder, Encoder};

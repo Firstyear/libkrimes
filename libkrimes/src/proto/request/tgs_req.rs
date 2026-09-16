@@ -14,8 +14,8 @@ use crate::proto::{
     EncTicket, EncryptedData, EncryptionType, KdcEncryptedData, KdcPrimaryKey, KerberosRequest,
     KerberosTime, KrbError, Name, Preauth, SessionKey, Ticket,
 };
-use der::asn1::{Any, OctetString};
-use rand::{rng, Rng};
+use crypto_glue::der::asn1::{Any, OctetString};
+use crypto_glue::rand::{rng, Rng};
 use std::time::SystemTime;
 use tracing::trace;
 

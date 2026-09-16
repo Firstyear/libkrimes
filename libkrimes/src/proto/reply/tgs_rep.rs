@@ -11,8 +11,7 @@ use crate::proto::{
     DerivedKey, EncTicket, EncryptedData, KdcPrimaryKey, KerberosTime, KrbError, Name, SessionKey,
     Ticket, TicketFlags,
 };
-use der::asn1::OctetString;
-use der::Encode;
+use crypto_glue::der::{asn1::OctetString, Encode};
 
 #[derive(Debug)]
 pub struct TicketGrantReply {

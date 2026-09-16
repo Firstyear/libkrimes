@@ -14,13 +14,13 @@ use crate::asn1::{
     OctetString,
 };
 use crate::error::KrbError;
-pub use as_req::{AuthenticationRequest, AuthenticationRequestBuilder};
-use der::{asn1::Any, Encode};
-pub use tgs_req::{TicketGrantRequest, TicketGrantRequestBuilder, TicketGrantRequestUnverified};
-
+use crypto_glue::der::{asn1::Any, Encode};
 use super::{EncryptedData, Name, Preauth};
 use std::time::SystemTime;
 use tracing::trace;
+
+pub use as_req::{AuthenticationRequest, AuthenticationRequestBuilder};
+pub use tgs_req::{TicketGrantRequest, TicketGrantRequestBuilder, TicketGrantRequestUnverified};
 
 #[derive(Debug)]
 pub enum KerberosRequest {

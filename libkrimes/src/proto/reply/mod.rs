@@ -20,10 +20,11 @@ use crate::asn1::{
     Ia5String, OctetString,
 };
 use crate::error::KrbError;
-pub use as_rep::{AuthenticationReply, AuthenticationReplyBuilder};
-use der::{Decode, Encode};
-pub use error_rep::{ErrorReply, KerberosReplyPreauthBuilder, PreauthErrorReply};
+use crypto_glue::der::{Decode, Encode};
 use std::time::{Duration, SystemTime};
+
+pub use as_rep::{AuthenticationReply, AuthenticationReplyBuilder};
+pub use error_rep::{ErrorReply, KerberosReplyPreauthBuilder, PreauthErrorReply};
 pub use tgs_rep::{
     KerberosReplyTicketGrantBuilder, KerberosReplyTicketRenewBuilder, TicketGrantReply,
 };

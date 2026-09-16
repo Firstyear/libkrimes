@@ -11,38 +11,36 @@ license = "MPL-2.0"
 homepage = "https://github.com/Firstyear/libkrimes"
 repository = "https://github.com/Firstyear/libkrimes"
 
+[patch.crates-io]
+crypto-glue = { path = "../crypto-glue" }
+
 [workspace.dependencies]
 libkrimes = { path = "./libkrimes", version = "=0.1.0" }
 
-aes = "0.8.4"
 assert_hex = "0.4.1"
 base64 = "0.22.0"
 bitflags = { version = "2.9.1" }
 bitmask-enum = "2.2.5"
 binrw = "0.15.0"
 bytes = { version = "^1.11.1" }
-cbc = "0.1.2"
 clap = { version = "4.5.8" }
+crypto-glue = { version = "0.2.1" }
 c-types = { version = "6.0.0" }
-der = { version = "0.8.0-rc.9" }
+# Still needed for macros to work.
+der = { version = "0.8.1" }
 errno = { version = "0.3.11" }
 futures = "^0.3.21"
 futures-util = { version = "0.3.31", features = ["sink"] }
 hex = { version = "0.4.3", features = ["serde"] }
-hmac = "0.12.1"
 keyutils = { version = "0.4.0" }
 keyutils-raw = { version="0.4.0" }
 libc = { version = "0.2.162" }
-ldap3_proto = { version = "0.7.1" }
+ldap3_proto = { version = "0.8.1" }
 num_enum = { version = "^0.7.3" }
-md5 = "0.8.0"
-pbkdf2 = "0.12.2"
 pest = "^2.8.6"
 pest_derive = "^2.8.6"
-rand = "0.9.4"
 serde = { version = "^1.0.204", features = ["derive"] }
 serde-binary = { version = "0.5.0" }
-sha1 = "0.10.6"
 tempfile = "3.19.1"
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3" }
@@ -63,3 +61,4 @@ uzers = "0.12.1"
 which = "8.0.0"
 chrono = { version = "0.4.44" }
 walkdir = { version = "2.5.0" }
+

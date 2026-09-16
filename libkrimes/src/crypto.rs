@@ -1,21 +1,35 @@
 use crate::constants::*;
 use crate::error::KrbError;
 
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockDecryptMut, BlockEncryptMut};
-use aes::Aes256;
-use hmac::{digest::FixedOutput, Hmac, Mac};
-use pbkdf2::pbkdf2_hmac;
-use rand::{rng, Rng};
-use sha1::Sha1;
+use crypto_glue::{
 
-type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+/*
+ aes::cipher::generic_array::GenericArray;
+ aes::cipher::{BlockDecryptMut, BlockEncryptMut};
+ aes::Aes256;
+ hmac::{digest::FixedOutput, Hmac, Mac};
+ */
 
-type Aes256Block = GenericArray<u8, <aes::Aes256 as aes::cipher::BlockSizeUser>::BlockSize>;
-type Aes256Key = GenericArray<u8, <aes::Aes256 as aes::cipher::KeySizeUser>::KeySize>;
+    traits::{Mac
+    KeyInit, KeyIvInit
+    },
+        sha1::Sha1,
+        aes256::{self, Aes256Key, Aes256Block},
 
-type HmacSha1 = Hmac<Sha1>;
+    pbkdf2::pbkdf2_hmac,
+    rand::{rng, Rng},
+    hmac_s1::{
+        HmacSha1
+    },
+};
+
+
+// type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
+// type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+// 
+// type Aes256Block = GenericArray<u8, <aes::Aes256 as aes::cipher::BlockSizeUser>::BlockSize>;
+// type Aes256Key = GenericArray<u8, <aes::Aes256 as aes::cipher::KeySizeUser>::KeySize>;
+
 
 /// Given the users passphrase, the kerberos realm, the client name and the iteration
 /// count then the users base key is derived. The iteration count is an optional value
@@ -244,7 +258,6 @@ fn encrypt_aes256_cts(
     plaintext: &[u8],
     ciphertext: &mut [u8],
 ) -> Result<(), KrbError> {
-    use aes::cipher::{KeyInit, KeyIvInit};
 
     // Need at lesat one block for the confuzzler.
     debug_assert!(ciphertext.len() == plaintext.len() + AES_BLOCK_SIZE);
@@ -461,7 +474,7 @@ mod tests {
     use crate::asn1::pa_enc_ts_enc::PaEncTsEnc;
     use crate::constants::{AES_256_KEY_LEN, RFC_PBKDF2_SHA1_ITER};
     use assert_hex::assert_eq_hex;
-    use der::Decode;
+    use crypto_glue::der::Decode;
 
     #[test]
     fn test_hmac_sha1_96_kerbeiros() {
