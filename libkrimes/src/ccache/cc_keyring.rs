@@ -84,7 +84,7 @@ use keyutils::keytypes::user::User;
 use keyutils::SpecialKeyring;
 use keyutils::{Key, Keyring};
 use keyutils_raw::{keyctl_get_keyring_id, keyctl_get_persistent};
-use rand::{distr::Alphanumeric, Rng};
+use crypto_glue::rand::{self, distr::Alphanumeric, Rng};
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::time::Duration;
