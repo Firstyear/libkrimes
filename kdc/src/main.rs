@@ -41,6 +41,7 @@ use tokio_util::codec::Framed;
 use tracing::{debug, error, info, instrument, trace};
 
 #[instrument(level = "info", skip_all)]
+#[allow(clippy::result_large_err)]
 async fn process_authentication(
     auth_req: &AuthenticationRequest,
     server_state: &ServerState,
@@ -185,6 +186,7 @@ async fn process_authentication(
 }
 
 #[instrument(level = "info", skip_all)]
+#[allow(clippy::result_large_err)]
 async fn process_ticket_grant(
     tgs_req: &TicketGrantRequestUnverified,
     server_state: &ServerState,
@@ -252,6 +254,7 @@ async fn process_ticket_grant(
 }
 
 #[instrument(level = "info", skip_all)]
+#[allow(clippy::result_large_err)]
 async fn process_ticket_renewal(
     tgs_req_valid: TicketGrantRequest,
     server_state: &ServerState,
@@ -480,7 +483,7 @@ fn keytab_extract_run(name: &str, output: &Path, config: &Config) -> io::Result<
 
     let key: DerivedKey = if principal_name.is_service_krbtgt(&server_state.realm) {
         let (k, kvno) = match server_state.primary_key {
-            KdcPrimaryKey::Aes256 { k, kvno } => (k, kvno),
+            KdcPrimaryKey::Aes256 { ref k, kvno } => (k.clone(), kvno),
         };
 
         DerivedKey::Aes256CtsHmacSha196 {

@@ -2,11 +2,9 @@ use crate::constants::*;
 use crate::error::KrbError;
 
 use crypto_glue::{
-    aes256::{
-        Aes256, Aes256Block, Aes256BlockSize, Aes256Key, BlockCipherDecrypt, BlockCipherEncrypt,
-    },
-    aes256cbc::{Aes256CbcDec, Aes256CbcEnc, BlockModeDecrypt, BlockModeEncrypt},
-    aes256cts::KeyIvInit,
+    aes256::{Aes256Block, Aes256BlockSize, Aes256Key},
+    aes256cbc::{Aes256CbcEnc, BlockModeEncrypt},
+    aes256cts::{Aes256CtsDec, Aes256CtsEnc, Aes256CtsIv, CtsDecrypt, CtsEncrypt, KeyIvInit},
     hmac_s1::HmacSha1,
     pbkdf2::pbkdf2_hmac,
     rand::{rng, RngExt},
@@ -39,8 +37,8 @@ fn dk_aes_256(out_buf: &mut Aes256Key, buf: &Aes256Key) {
     let (lower, upper) = out_buf.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
-    dk_encrypt_aes_256_cbc(buf, &N_FOLD_KERBEROS_16.into(), lower.as_mut());
-    dk_encrypt_aes_256_cbc(buf, (&*lower).into(), upper.as_mut());
+    dk_encrypt_aes_256_cbc(buf, &N_FOLD_KERBEROS_16.into(), lower);
+    dk_encrypt_aes_256_cbc(buf, lower, upper);
 }
 
 fn dk_encrypt_aes_256_cbc(key: &Aes256Key, plaintext: &Aes256Block, out_buf: &mut Aes256Block) {
@@ -65,7 +63,14 @@ pub(crate) fn decrypt_aes256_cts_hmac_sha1_96(
         // More key derivation ...
         let (ki, ke) = dk_ki_ke_aes_256(key, key_usage);
 
-        let mut plaintext = decrypt_aes256_cts(&ke, ciphertext)?;
+        let mut plaintext = ciphertext.to_vec();
+
+        let zero_iv = Aes256CtsIv::default();
+        let aes_256_cts_dec = Aes256CtsDec::new(&ke, &zero_iv);
+
+        aes_256_cts_dec
+            .decrypt_inout(plaintext.as_mut_slice().into())
+            .map_err(|_err| KrbError::InsufficientData)?;
 
         // let mut mac = HmacSha1::new(&ki.into());
         let mut mac = HmacSha1::new_from_slice(&ki).map_err(|_| KrbError::InvalidHmacSha1Key)?;
@@ -104,28 +109,38 @@ pub(crate) fn encrypt_aes256_cts_hmac_sha1_96(
     };
     let (ki, ke) = dk_ki_ke_aes_256(key, key_usage);
 
-    let mut confuzzler = [0u8; AES_BLOCK_SIZE];
-    rng().fill(&mut confuzzler);
+    let mut buf = vec![0; AES_BLOCK_SIZE + plaintext.len() + SHA1_HMAC_LEN];
 
-    // let mut mac = HmacSha1::new(ki.into());
-    let mut mac = HmacSha1::new_from_slice(&ki).map_err(|_| KrbError::InvalidHmacSha1Key)?;
+    {
+        let (confuzzler, buf_rem) = buf.split_at_mut(AES_BLOCK_SIZE);
+        rng().fill(confuzzler);
 
-    mac.update(&confuzzler);
-    mac.update(plaintext);
+        let (ciphertext, hmac) = buf_rem.split_at_mut(plaintext.len());
+        ciphertext.copy_from_slice(plaintext);
 
-    let mut buf = [0u8; 20];
-    mac.finalize_into((&mut buf).into());
+        let mut mac = HmacSha1::new_from_slice(&ki).map_err(|_| KrbError::InvalidHmacSha1Key)?;
 
-    // Truncate to 96 bits.
-    let my_hmac = &buf[0..SHA1_HMAC_LEN];
+        mac.update(confuzzler);
+        mac.update(ciphertext);
 
-    let mut ciphertext = vec![0; AES_BLOCK_SIZE + plaintext.len() + SHA1_HMAC_LEN];
-    let (cipher, hmac) = ciphertext.split_at_mut(AES_BLOCK_SIZE + plaintext.len());
+        let mut buf = [0u8; 20];
+        mac.finalize_into((&mut buf).into());
 
-    encrypt_aes256_cts(&ke, &confuzzler, plaintext, cipher)?;
-    hmac.copy_from_slice(my_hmac);
+        // Truncate to 96 bits.
+        let my_hmac = &buf[0..SHA1_HMAC_LEN];
+        hmac.copy_from_slice(my_hmac);
+    }
 
-    Ok(ciphertext)
+    let (cipher, _hmac) = buf.split_at_mut(AES_BLOCK_SIZE + plaintext.len());
+
+    let zero_iv = Aes256CtsIv::default();
+    let aes_256_cts_enc = Aes256CtsEnc::new(&ke, &zero_iv);
+
+    aes_256_cts_enc
+        .encrypt_inout(cipher.into())
+        .map_err(|_err| KrbError::InsufficientData)?;
+
+    Ok(buf)
 }
 
 fn dk_kc_aes_256(buf: &Aes256Key, key_usage: i32) -> Aes256Key {
@@ -170,8 +185,8 @@ fn dk_kc_aes_256(buf: &Aes256Key, key_usage: i32) -> Aes256Key {
     let (lower, upper) = kc.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
-    dk_encrypt_aes_256_cbc(buf, kc_const.into(), lower.as_mut());
-    dk_encrypt_aes_256_cbc(buf, (&*lower).into(), upper.as_mut());
+    dk_encrypt_aes_256_cbc(buf, kc_const.into(), lower);
+    dk_encrypt_aes_256_cbc(buf, lower, upper);
 
     kc
 }
@@ -218,209 +233,17 @@ fn dk_ki_ke_aes_256(buf: &Aes256Key, key_usage: i32) -> (Aes256Key, Aes256Key) {
     let (lower, upper) = ki.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
-    dk_encrypt_aes_256_cbc(buf.into(), ki_const.into(), lower.into());
-    dk_encrypt_aes_256_cbc(buf.into(), (&*lower).into(), upper.into());
+    dk_encrypt_aes_256_cbc(buf, ki_const.into(), lower);
+    dk_encrypt_aes_256_cbc(buf, lower, upper);
 
     let mut ke = Aes256Key::default();
     let (lower, upper) = ke.split_ref_mut::<Aes256BlockSize>();
     debug_assert!(lower.len() == AES_BLOCK_SIZE);
     debug_assert!(upper.len() == AES_BLOCK_SIZE);
-    dk_encrypt_aes_256_cbc(buf.into(), ke_const.into(), lower.into());
-    dk_encrypt_aes_256_cbc(buf.into(), (&*lower).into(), upper.into());
+    dk_encrypt_aes_256_cbc(buf, ke_const.into(), lower);
+    dk_encrypt_aes_256_cbc(buf, lower, upper);
 
     (ki, ke)
-}
-
-fn encrypt_aes256_cts(
-    key: &Aes256Key,
-    confuzzler: &[u8],
-    plaintext: &[u8],
-    ciphertext: &mut [u8],
-) -> Result<(), KrbError> {
-    // Need at lesat one block for the confuzzler.
-    debug_assert!(ciphertext.len() == plaintext.len() + AES_BLOCK_SIZE);
-
-    let plaintext_chunks = plaintext.chunks(AES_BLOCK_SIZE);
-    let mut ciphertext_chunks = ciphertext.chunks_mut(AES_BLOCK_SIZE);
-
-    // There will be one more ciphertext_chunk than plaintext.
-    debug_assert!(plaintext_chunks.len() + 1 == ciphertext_chunks.len());
-
-    // Now there are some chunks here that are special.
-    // The first ciphertext chunk is a confuzzler. We take this as a "last_chunk"
-    // variable because we need to operate on this as we proceed.
-    let mut previous_chunk = ciphertext_chunks
-        .next()
-        // Should be impossible
-        .ok_or(KrbError::InsufficientData)?;
-    // The last "chunk" of both needs to be operated on for CTS mode.
-
-    // Zip the iters now, we positioned ciphertext to match.
-    let mut chunks = std::iter::zip(ciphertext_chunks, plaintext_chunks);
-    // Get the last chunk, this is the only one that may not be block_size
-    // and needs special handling.
-    let (c_n_chunk, p_n_star_chunk) = chunks
-        .next_back()
-        // Should be impossible
-        .ok_or(KrbError::InsufficientData)?;
-
-    // All remaining chunks are to be directly encrypted.
-
-    // Setup the CBC encipher.
-    let mut cipher = Aes256CbcEnc::new(key, &IV_ZERO.into());
-
-    // Setup the initial block that contains the confuzzler
-    let mut previous_block = [0u8; AES_BLOCK_SIZE];
-    previous_block.copy_from_slice(confuzzler);
-
-    // Initially encipher the confuzzler
-    cipher.encrypt_block((&mut previous_block).into());
-    previous_chunk.copy_from_slice(&previous_block);
-
-    // Now for each chunk, encrypt.
-    for (cipher_chunk, plain_chunk) in chunks {
-        previous_block.copy_from_slice(plain_chunk);
-        cipher.encrypt_block((&mut previous_block).into());
-        cipher_chunk.copy_from_slice(&previous_block);
-        previous_chunk = cipher_chunk;
-    }
-
-    // Now we are positioned. previous_chunk + previous_block both have Cn-1.
-
-    // We have c_n and p_n already positioned from the start.
-
-    let c_n1_chunk = previous_chunk;
-    let c_n1_block = previous_block;
-
-    let p_n_star_len = p_n_star_chunk.len();
-
-    debug_assert!(*c_n1_chunk == c_n1_block);
-
-    let mut c_n_block: Aes256Block = [0u8; AES_BLOCK_SIZE].into();
-
-    let (p_n_star, c_n_star_2) = c_n_block.split_at_mut(p_n_star_len);
-    p_n_star.copy_from_slice(p_n_star_chunk);
-
-    let (c_n1_star, c_n1_star_2) = c_n1_block.split_at(p_n_star_len);
-    c_n_star_2.copy_from_slice(c_n1_star_2);
-
-    for i in 0..p_n_star_len {
-        p_n_star[i] ^= c_n1_star[i];
-    }
-
-    let raw_cipher = Aes256::new(key);
-    raw_cipher.encrypt_block(&mut c_n_block);
-
-    // We now have c_n_block and c_n1_star. This is where we apply the CS3 / CTS
-    // swap.
-    c_n1_chunk.copy_from_slice(&c_n_block);
-    c_n_chunk.copy_from_slice(c_n1_star);
-
-    Ok(())
-}
-
-fn decrypt_aes256_cts(key: &Aes256Key, ciphertext: &[u8]) -> Result<Vec<u8>, KrbError> {
-    // Should not be possible
-    debug_assert!(!ciphertext.is_empty());
-
-    let ctxt_len = ciphertext.len();
-
-    let num_blocks = ctxt_len / AES_BLOCK_SIZE;
-    let mut cipher = Aes256CbcDec::new(key, &IV_ZERO.into());
-
-    if num_blocks == 0 {
-        // Impossible in krb because the first block is always the confounder.
-        return Err(KrbError::CtsCiphertextInvalid);
-    }
-
-    // Fill with zeros
-    let mut plaintext = vec![0; ctxt_len];
-
-    let plaintext_chunks = plaintext.chunks_mut(AES_BLOCK_SIZE);
-    let ciphertext_chunks = ciphertext.chunks(AES_BLOCK_SIZE);
-
-    let mut chunks = std::iter::zip(ciphertext_chunks, plaintext_chunks);
-
-    // Remove the last two blocks from the right. These are "special" in CTS.
-    let (c_n1_chunk, p_n_chunk) = chunks.next_back().ok_or(KrbError::InsufficientData)?;
-    // Penultimate chunk
-    let (c_n_chunk, p_n1_chunk) = chunks.next_back().ok_or(KrbError::InsufficientData)?;
-
-    // Now process the other chunks as normal. CTS aka CS3 is just CBC with
-    // bad vibes at the end.
-    // .encrypt_block_b2b_mut(plaintext, out_buf)
-
-    for (cipher_chunk, plain_chunk) in chunks {
-        cipher.decrypt_block_b2b(cipher_chunk.as_slice(), plain_chunk.as_mut())
-    }
-
-    // Now we have to process the last two blocks. To understand why we need
-    // to look at the encryption process.
-    // CTS or CS3 from nist SP800-38A defines our chunks in the cipher text as:
-    //
-    // C1 || C2 || ... || Cn-2 || Cn-1 || Cn
-    //
-    // Similar plaintext is
-    //
-    // P1 || P2 || ... || Pn-2 || Pn-1 || Pn
-    //
-    // The spec will denote Cn-1* as the MSB of Cn-1 and Cn-1** as the LSB to
-    // some length d.
-    //
-    // In the encryption of CS1 when Pn doesn't make a full block, then Pn is
-    // padded with 0 and XORed with Cn-1 (per cbc). But before the cipher is
-    // applied then Pn is XORed with Cn-1* and has Cn-2** appended.This is then
-    // put through the cipher.
-    //
-    // CS3 is an alteration of CS1 where Cn-1 and Cn are always
-    // swapped so we know what blocks are what.
-    //
-    // C1 || C2 || ... || Cn-2 || Cn || Cn-1
-    //
-    // So to decrypt we do CBC up to Cn-2.
-    // At that point we need to decrypt Cn with AES ECB. This gives us Z* and
-    // Z**.
-    //
-    // We can then XOR Z* with Cn-1* to get Pn*. Finally we can perform
-    // The last decryption with Cn-1* concat Z** via CBC mode to finish the
-    // decryption.
-    //
-    // This weird dance ends up that if we are block aligned it's just CBC with
-    // the last two blocks swapped basicly.
-
-    // We need a scratch block.
-    let mut z: Aes256Block = [0u8; AES_BLOCK_SIZE].into();
-    let mut raw_cipher = Aes256::new(key);
-
-    let z_star_len = c_n1_chunk.len();
-
-    // Decrypt Cn
-    raw_cipher.decrypt_block_b2b(&c_n_chunk, &mut z);
-
-    // Block is now Z.
-    let (z_star, z_star_2) = z.split_at(z_star_len);
-
-    debug_assert!(z_star_2.len() + c_n1_chunk.len() == AES_BLOCK_SIZE);
-
-    debug_assert!(z_star.len() == p_n_chunk.len());
-
-    for i in 0..z_star.len() {
-        p_n_chunk[i] = c_n1_chunk[i] ^ z_star[i];
-    }
-
-    // Pn is complete.
-    let mut cn1_block: Aes256Block = [0u8; AES_BLOCK_SIZE].into();
-
-    // We concat the two slices here.
-    let (cn1_block_star, cn1_block_star_2) = cn1_block.split_at_mut(c_n1_chunk.len());
-    cn1_block_star.copy_from_slice(c_n1_chunk);
-    cn1_block_star_2.copy_from_slice(z_star_2);
-
-    // We can re-use the existing cbc cipher as it has the correct state
-    // of the cbc mode.
-    cipher.decrypt_block_b2b(&cn1_block, p_n1_chunk.as_mut());
-
-    Ok(plaintext)
 }
 
 pub(crate) fn checksum_hmac_sha1_96_aes256(

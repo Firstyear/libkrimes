@@ -1,7 +1,6 @@
 pub const DEFAULT_IO_MAX_SIZE: usize = 32 * 1024;
 
 pub const AES_BLOCK_SIZE: usize = 16;
-pub const AES_256_KEY_LEN: usize = 32;
 pub const SHA1_HMAC_LEN: usize = 12;
 
 // Tested on a 3.2GHz aarch64 machine to hit ~1 second with a --release build with at least

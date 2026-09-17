@@ -12,7 +12,7 @@ homepage = "https://github.com/Firstyear/libkrimes"
 repository = "https://github.com/Firstyear/libkrimes"
 
 [patch.crates-io]
-crypto-glue = { path = "../crypto-glue" }
+# crypto-glue = { path = "../crypto-glue" }
 
 [workspace.dependencies]
 libkrimes = { path = "./libkrimes", version = "=0.1.0" }
